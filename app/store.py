@@ -170,6 +170,21 @@ def update_purchase(
         )
 
 
+def transition_purchase(
+    purchase_id: int, from_status: str, to_status: str,
+    payment_ref: Optional[str] = None,
+) -> bool:
+    """Change status only if it is still from_status. True if changed."""
+    with _conn() as conn:
+        cursor = conn.execute(
+            "UPDATE purchases SET status = ?,"
+            " payment_ref = COALESCE(?, payment_ref)"
+            " WHERE id = ? AND status = ?",
+            (to_status, payment_ref, purchase_id, from_status),
+        )
+        return cursor.rowcount == 1
+
+
 def list_purchases(status: Optional[str] = None) -> list[dict]:
     """Return purchases, newest first, optionally filtered by status."""
     query = "SELECT * FROM purchases"

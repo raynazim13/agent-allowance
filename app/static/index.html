@@ -87,6 +87,7 @@ tr.low td:first-child{box-shadow:inset 3px 0 0 var(--hold);padding-left:10px}
   font-weight:500;white-space:nowrap}
 .tag.paid{background:var(--auto-bg);color:var(--auto)}
 .tag.pending{background:var(--hold-bg);color:var(--hold)}
+.tag.sent{background:var(--idle-bg);color:var(--idle)}
 .tag.blocked,.tag.failed{background:var(--block-bg);color:var(--block)}
 .tag.denied,.tag.low-off{background:var(--idle-bg);color:var(--idle)}
 .tag.low{background:var(--hold-bg);color:var(--hold)}
@@ -246,7 +247,8 @@ const SUPPLIERS = {
 const CATEGORIES = ["ingredients", "packaging", "cleaning"];
 const STATUS = {
   PAID: "Paid", PENDING: "Needs approval", BLOCKED: "Blocked",
-  DENIED: "Denied", FAILED: "Failed", APPROVED: "Approved"
+  DENIED: "Denied", FAILED: "Failed", APPROVED: "Approved",
+  SENT: "Paying..."
 };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
@@ -279,14 +281,15 @@ function tag(status) {
     + `${esc(STATUS[status] || status)}</span>`;
 }
 
-function renderBudget(m) {
+function renderBudget(m, reserved) {
   const pct = Math.min(100, (m.spent_this_month / m.monthly_budget) * 100);
   $("spent").textContent = money(m.spent_this_month);
   $("barFill").style.width = pct + "%";
   $("barFill").className = pct >= 80 ? "warn" : "";
   $("barWrap").setAttribute("aria-valuenow", Math.round(pct));
   $("budgetText").textContent = "spent of " + money(m.monthly_budget)
-    + " this month";
+    + " this month" + (reserved > 0
+      ? ` (incl. ${money(reserved)} paying)` : "");
   $("leftText").textContent = money(
     Math.max(0, m.monthly_budget - m.spent_this_month)) + " left";
   $("kill").setAttribute("aria-checked", String(m.active));
@@ -383,7 +386,7 @@ function renderAuto(a, day) {
 
 async function refresh(withForm = false) {
   state = await api("/state");
-  renderBudget(state.mandate);
+  renderBudget(state.mandate, state.reserved);
   renderInventory(state.inventory);
   renderQueue(state.pending);
   renderOrders(state.purchases);
@@ -409,6 +412,7 @@ $("runBtn").onclick = (ev) => busy(ev.target, async () => {
   const n = (s) => res.orders.filter((o) => o.status === s).length;
   say(res.orders.length
     ? `Agent proposed ${res.orders.length} orders: ${n("PAID")} paid, `
+      + `${n("SENT")} paying, `
       + `${n("PENDING")} need your approval, ${n("BLOCKED")} blocked.`
     : "Nothing new to order. Items already waiting or blocked are skipped.");
   await refresh();
@@ -484,7 +488,8 @@ $("speed").onchange = (ev) => busy(ev.target, () =>
 
 setInterval(() => {
   const a = state && state.autopilot;
-  if (a && (a.play || a.autopilot) && !document.hidden) {
+  const paying = state && state.reserved > 0;
+  if (a && (a.play || a.autopilot || paying) && !document.hidden) {
     refresh().catch(() => {});
   }
 }, 2500);

@@ -47,7 +47,7 @@ def test_pay_supplier_sends_payout():
     """A payout goes to the supplier's email for the order total."""
     backend, calls = _paypal(_ok)
     result = backend.pay_supplier(_order())
-    assert result == {"status": "PAID", "ref": "PAYPAL-BATCH123"}
+    assert result == {"status": "SENT", "ref": "PAYPAL-BATCH123"}
     payout = calls[1]
     assert payout.url.path == "/v1/payments/payouts"
     assert payout.headers["Authorization"] == "Bearer tok"
@@ -143,3 +143,46 @@ def test_failed_paypal_payment_marks_order_failed(monkeypatch):
     assert store.get_mandate().spent_this_month == 0
     stock_after = {i["sku"]: i["stock"] for i in store.get_inventory()}
     assert stock_after == stock_before
+
+
+def _status_reply(batch: str, item: str):
+    """A handler whose payout lookup returns these statuses."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Grant a token, then report the payout status."""
+        if request.url.path == "/v1/oauth2/token":
+            return _ok(request)
+        assert request.url.path == "/v1/payments/payouts/BATCH123"
+        return httpx.Response(200, json={
+            "batch_header": {"batch_status": batch},
+            "items": [{"transaction_status": item}],
+        })
+    return handler
+
+
+@pytest.mark.parametrize("batch, item, expected", [
+    ("SUCCESS", "SUCCESS", "PAID"),
+    ("PROCESSING", "SUCCESS", "PAID"),
+    ("PENDING", "PENDING", "SENT"),
+    ("PROCESSING", "UNCLAIMED", "SENT"),
+    ("PROCESSING", "ONHOLD", "SENT"),
+    ("SUCCESS", "FAILED", "FAILED"),
+    ("SUCCESS", "RETURNED", "FAILED"),
+    ("DENIED", "", "FAILED"),
+])
+def test_check_payment_maps_paypal_status(batch, item, expected):
+    """Only a SUCCESS item is PAID; failures map to FAILED."""
+    backend, _ = _paypal(_status_reply(batch, item))
+    assert backend.check_payment("PAYPAL-BATCH123") == expected
+
+
+def test_check_payment_http_error_raises():
+    """A failed status lookup raises, so the order stays SENT."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Grant a token but fail the lookup."""
+        if request.url.path == "/v1/oauth2/token":
+            return _ok(request)
+        return httpx.Response(500, json={})
+
+    backend, _ = _paypal(handler)
+    with pytest.raises(PaymentError, match="status check"):
+        backend.check_payment("PAYPAL-BATCH123")

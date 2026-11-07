@@ -17,7 +17,11 @@ from app.models import Order
 
 SANDBOX_URL = "https://api-m.sandbox.paypal.com"
 TOKEN_MARGIN_S = 60
+REF_PREFIX = "PAYPAL-"
 FAILED_BATCH_STATUSES = {"DENIED", "CANCELED"}
+FAILED_ITEM_STATUSES = {
+    "FAILED", "RETURNED", "BLOCKED", "REFUNDED", "REVERSED", "DENIED",
+}
 
 
 class PaymentError(Exception):
@@ -28,7 +32,14 @@ class Payments(Protocol):
     """Interface every payment backend must follow."""
 
     def pay_supplier(self, order: Order) -> dict:
-        """Pay the supplier and return {'status', 'ref'}."""
+        """Start paying the supplier and return {'status', 'ref'}.
+
+        status is 'PAID' if the money has already arrived, or 'SENT'
+        if the payment is still in progress (see check_payment).
+        """
+
+    def check_payment(self, ref: str) -> str:
+        """Return 'PAID', 'FAILED' or 'SENT' (still in progress)."""
 
 
 class FakePayments:
@@ -37,6 +48,10 @@ class FakePayments:
     def pay_supplier(self, order: Order) -> dict:
         """Return a fake successful payment."""
         return {"status": "PAID", "ref": f"FAKE-{uuid4().hex[:8]}"}
+
+    def check_payment(self, ref: str) -> str:
+        """Fake payments always succeed."""
+        return "PAID"
 
 
 def parse_supplier_emails(raw: str) -> dict[str, str]:
@@ -121,14 +136,15 @@ class PayPalPayments:
             }],
         }
 
+    def _auth_headers(self) -> dict:
+        """Bearer token header for API calls."""
+        return {"Authorization": f"Bearer {self._get_token()}"}
+
     def pay_supplier(self, order: Order) -> dict:
-        """Send a payout to the supplier and return its batch ID."""
+        """Send a payout to the supplier. It finishes asynchronously."""
         batch_id = f"aa-{uuid4().hex[:20]}"
         body = self._payout_body(order, batch_id)
-        headers = {
-            "Authorization": f"Bearer {self._get_token()}",
-            "PayPal-Request-Id": batch_id,
-        }
+        headers = {**self._auth_headers(), "PayPal-Request-Id": batch_id}
         try:
             resp = self.http.post(
                 f"{self.base_url}/v1/payments/payouts",
@@ -144,7 +160,35 @@ class PayPalPayments:
         payout_id = header.get("payout_batch_id", "")
         if not payout_id or status in FAILED_BATCH_STATUSES:
             raise PaymentError(f"PayPal payout not accepted ({status})")
-        return {"status": "PAID", "ref": f"PAYPAL-{payout_id}"}
+        return {"status": "SENT", "ref": f"{REF_PREFIX}{payout_id}"}
+
+    def check_payment(self, ref: str) -> str:
+        """Ask PayPal whether a payout has finished.
+
+        Only a SUCCESS item counts as PAID. PENDING, ONHOLD and
+        UNCLAIMED stay SENT (money has left but has not landed).
+        """
+        payout_id = ref.removeprefix(REF_PREFIX)
+        try:
+            resp = self.http.get(
+                f"{self.base_url}/v1/payments/payouts/{payout_id}",
+                headers=self._auth_headers(),
+            )
+        except httpx.HTTPError as exc:
+            raise PaymentError(f"PayPal status check failed: {exc}")
+        if resp.status_code != 200:
+            raise PaymentError(
+                f"PayPal status check failed (HTTP {resp.status_code})"
+            )
+        body = resp.json()
+        batch = body.get("batch_header", {}).get("batch_status", "")
+        items = body.get("items") or [{}]
+        item = items[0].get("transaction_status", "")
+        if item == "SUCCESS":
+            return "PAID"
+        if item in FAILED_ITEM_STATUSES or batch in FAILED_BATCH_STATUSES:
+            return "FAILED"
+        return "SENT"
 
 
 def _error_message(resp: httpx.Response) -> str:

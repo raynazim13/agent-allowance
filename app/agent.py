@@ -23,7 +23,8 @@ SYSTEM_PROMPT = (
     f"lead time, and order about {COVER_DAYS} days of sales cover "
     "(daily_sales x days minus current stock). Only report what "
     "propose_order returns. Never claim money was spent unless the "
-    "status is PAID. If an order is HOLD, say it needs owner approval. "
+    "status is PAID. If the status is SENT, say the payment is in "
+    "progress. If an order is HOLD, say it needs owner approval. "
     "If it is BLOCKED because the supplier is not approved, you may try "
     "a different supplier once. Never split an order to get around a "
     "limit. Finish with a short summary."
@@ -55,9 +56,15 @@ TOOLS = [
 ]
 
 
+OPEN_STATUSES = ("PENDING", "SENT")
+
+
 def _pending_skus() -> set[str]:
-    """SKUs that already have an order waiting for the owner."""
-    return {p["sku"] for p in store.list_purchases("PENDING")}
+    """SKUs with an open order (awaiting the owner or still paying)."""
+    return {
+        p["sku"] for status in OPEN_STATUSES
+        for p in store.list_purchases(status)
+    }
 
 
 def _is_repeat_block(sku: str, supplier_id: str, qty: int) -> bool:

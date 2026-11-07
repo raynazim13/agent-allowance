@@ -1,4 +1,6 @@
 """Business logic: orders, approvals, time simulation and state."""
+import threading
+
 from pydantic import ValidationError
 
 from app import store
@@ -13,27 +15,100 @@ def _error(actor: str, detail: str) -> dict:
     return {"status": "ERROR", "reason": detail}
 
 
-def _pay(purchase_id: int, order: Order, actor: str) -> dict:
-    """Pay the supplier and update stock, budget and status."""
-    try:
-        result = get_payments().pay_supplier(order)
-    except (PaymentError, NotImplementedError) as exc:
-        store.update_purchase(purchase_id, "FAILED")
-        store.log(actor, "payment_failed", f"#{purchase_id}: {exc}")
-        return {"id": purchase_id, "status": "FAILED", "reason": str(exc)}
+# Serialises every change to budget, stock and payment status, so the
+# agent thread, the autopilot loop and HTTP requests cannot race.
+_money_lock = threading.RLock()
+
+
+def _change_spent(delta: float) -> None:
+    """Add delta to spent_this_month (negative releases budget)."""
     mandate = store.get_mandate()
     mandate.spent_this_month = round(
-        mandate.spent_this_month + order.total, 2
+        max(0.0, mandate.spent_this_month + delta), 2
     )
     store.save_mandate(mandate)
-    store.add_stock(order.sku, order.qty)
-    store.update_purchase(purchase_id, "PAID", result["ref"])
+
+
+def _settle_paid(purchase: dict, actor: str) -> None:
+    """Money arrived: deliver the stock and mark the order PAID."""
+    if not store.transition_purchase(purchase["id"], "SENT", "PAID"):
+        return
+    store.add_stock(purchase["sku"], purchase["qty"])
     store.log(
         actor, "paid",
-        f"#{purchase_id} {order.qty}x {order.sku} from "
-        f"{order.supplier_id} = ${order.total:.2f} ({result['ref']})",
+        f"#{purchase['id']} {purchase['qty']}x {purchase['sku']} from "
+        f"{purchase['supplier_id']} = ${purchase['total']:.2f} "
+        f"({purchase['payment_ref']})",
     )
-    return {"id": purchase_id, "status": "PAID", "ref": result["ref"]}
+
+
+def _settle_failed(purchase: dict, actor: str) -> None:
+    """Payout failed: release the reserved budget, add no stock."""
+    if not store.transition_purchase(purchase["id"], "SENT", "FAILED"):
+        return
+    _change_spent(-purchase["total"])
+    store.log(
+        actor, "payment_failed",
+        f"#{purchase['id']}: PayPal payout failed, "
+        f"${purchase['total']:.2f} released ({purchase['payment_ref']})",
+    )
+
+
+def _pay(purchase_id: int, order: Order, actor: str) -> dict:
+    """Start paying the supplier and reserve the budget.
+
+    The order becomes SENT and its total counts as spent straight away,
+    so in-flight payouts still count toward every limit. Stock is only
+    added once the payment is confirmed PAID.
+    """
+    with _money_lock:
+        try:
+            result = get_payments().pay_supplier(order)
+        except (PaymentError, NotImplementedError) as exc:
+            store.update_purchase(purchase_id, "FAILED")
+            store.log(actor, "payment_failed", f"#{purchase_id}: {exc}")
+            return {
+                "id": purchase_id, "status": "FAILED", "reason": str(exc),
+            }
+        ref = result["ref"]
+        _change_spent(order.total)
+        store.update_purchase(purchase_id, "SENT", ref)
+        store.log(
+            actor, "payment_sent",
+            f"#{purchase_id} ${order.total:.2f} to {order.supplier_id} "
+            f"reserved, payout in progress ({ref})",
+        )
+        if result["status"] == "PAID":
+            _settle_paid(store.get_purchase(purchase_id) or {}, actor)
+        status = (store.get_purchase(purchase_id) or {}).get("status")
+    return {"id": purchase_id, "status": status, "ref": ref}
+
+
+def reconcile_payments() -> list[dict]:
+    """Check every SENT payout and settle the ones that finished."""
+    changed = []
+    with _money_lock:
+        sent = store.list_purchases("SENT")
+        if not sent:
+            return changed
+        try:
+            backend = get_payments()
+        except PaymentError as exc:
+            store.log("system", "reconcile_failed", str(exc))
+            return changed
+        for purchase in sent:
+            try:
+                status = backend.check_payment(purchase["payment_ref"])
+            except PaymentError:
+                continue
+            if status == "PAID":
+                _settle_paid(purchase, "system")
+            elif status == "FAILED":
+                _settle_failed(purchase, "system")
+            else:
+                continue
+            changed.append({"id": purchase["id"], "status": status})
+    return changed
 
 
 def _build_order(
@@ -66,6 +141,13 @@ def process_order(
         order = _build_order(sku, supplier_id, qty, reason)
     except (ValueError, ValidationError) as exc:
         return _error(actor, f"{sku}/{supplier_id}/{qty}: {exc}")
+    with _money_lock:
+        return _decide_and_act(order, actor)
+
+
+def _decide_and_act(order: Order, actor: str) -> dict:
+    """Run the policy, save the purchase and pay if AUTO (locked)."""
+    sku, supplier_id, qty = order.sku, order.supplier_id, order.qty
     item = store.get_item(sku) or {}
     decision, why = evaluate(
         order, store.get_mandate(), item.get("usual_price", 0)
@@ -121,16 +203,19 @@ def approve(purchase_id: int) -> dict:
     if purchase is None or purchase["status"] != "PENDING":
         raise ValueError("Purchase is not waiting for approval")
     order = _order_from_purchase(purchase)
-    item = store.get_item(order.sku) or {}
-    decision, why = evaluate(
-        order, store.get_mandate(), item.get("usual_price", 0)
-    )
-    if decision == Decision.BLOCK:
-        store.update_purchase(purchase_id, "BLOCKED")
-        store.log("owner", "approve_blocked", f"#{purchase_id}: {why}")
-        return {"id": purchase_id, "status": "BLOCKED", "reason": why}
-    store.log("owner", "approved", f"#{purchase_id} approved by owner")
-    return _pay(purchase_id, order, "owner")
+    with _money_lock:
+        item = store.get_item(order.sku) or {}
+        decision, why = evaluate(
+            order, store.get_mandate(), item.get("usual_price", 0)
+        )
+        if decision == Decision.BLOCK:
+            store.update_purchase(purchase_id, "BLOCKED")
+            store.log(
+                "owner", "approve_blocked", f"#{purchase_id}: {why}"
+            )
+            return {"id": purchase_id, "status": "BLOCKED", "reason": why}
+        store.log("owner", "approved", f"#{purchase_id} approved by owner")
+        return _pay(purchase_id, order, "owner")
 
 
 def deny(purchase_id: int) -> dict:
@@ -167,9 +252,11 @@ def get_state() -> dict:
         sales = item["daily_sales"]
         item["days_left"] = round(item["stock"] / sales, 1) if sales else None
         item["low"] = item["stock"] <= item["reorder_at"]
+    sending = store.list_purchases("SENT")
     return {
         "inventory": inventory,
         "mandate": store.get_mandate().model_dump(),
+        "reserved": round(sum(p["total"] for p in sending), 2),
         "pending": store.list_purchases("PENDING"),
         "purchases": store.list_purchases(),
         "log": store.list_log(),

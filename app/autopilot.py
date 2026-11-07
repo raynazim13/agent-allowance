@@ -30,7 +30,8 @@ def update(
 
 
 def tick() -> None:
-    """One step: maybe advance a day, then maybe run the agent."""
+    """One step: settle payouts, maybe advance a day, maybe run agent."""
+    service.reconcile_payments()
     if settings["play"]:
         service.advance_day()
     if settings["autopilot"] and agent.needs_action():
