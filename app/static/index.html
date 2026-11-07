@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Allowance</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f1f3f2;--panel:#fff;--ink:#16202a;--muted:#5d6975;--line:#d8dee2;
+  --auto:#1d7a4c;--auto-bg:#e2f3ea;--hold:#8f5300;--hold-bg:#fcefd4;
+  --block:#b3261e;--block-bg:#fbe3e1;--idle:#4b5661;--idle-bg:#e8ecee;
+  --radius:10px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#10161b;--panel:#182028;--ink:#e8edf1;--muted:#9aa6b1;--line:#2b3641;
+    --auto:#5fd39a;--auto-bg:#173628;--hold:#f0b95a;--hold-bg:#3a2d12;
+    --block:#ff8f87;--block-bg:#44201e;--idle:#b4bec7;--idle-bg:#252f38;
+  }
+}
+*{box-sizing:border-box}
+html{color-scheme:light dark}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.5 "Hanken Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-variant-numeric:tabular-nums}
+main{max-width:1180px;margin:0 auto;padding:24px 20px 56px}
+h1{font-size:26px;line-height:1.15;margin:0}
+h2{font-size:17px;margin:0 0 12px}
+p{margin:0}
+.muted{color:var(--muted)}
+.top{display:flex;gap:24px;align-items:flex-end;justify-content:space-between;
+  flex-wrap:wrap;padding-bottom:20px}
+.top p{margin-top:6px;max-width:46ch}
+.switch{display:flex;align-items:center;gap:14px;background:var(--panel);
+  border:1px solid var(--line);border-radius:999px;padding:8px 10px 8px 20px}
+.switch b{display:block;font-size:15px}
+.switch small{color:var(--muted)}
+.toggle{width:64px;height:34px;border-radius:999px;border:0;cursor:pointer;
+  background:var(--auto);position:relative;transition:background .2s}
+.toggle::after{content:"";position:absolute;top:4px;left:34px;width:26px;
+  height:26px;border-radius:50%;background:#fff;transition:left .2s}
+.toggle[aria-checked="false"]{background:var(--block)}
+.toggle[aria-checked="false"]::after{left:4px}
+.banner{display:none;background:var(--block-bg);color:var(--block);
+  border-radius:var(--radius);padding:10px 14px;margin-bottom:16px;
+  font-weight:500}
+.banner.show{display:block}
+.card{background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);padding:18px}
+.budget{display:grid;grid-template-columns:auto 1fr;gap:8px 28px;
+  align-items:center;margin-bottom:16px}
+.budget .num{font-size:34px;font-weight:700;line-height:1}
+.bar{height:12px;border-radius:99px;background:var(--idle-bg);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--auto);width:0;
+  transition:width .3s}
+.bar i.warn{background:var(--hold)}
+.budget .sub{grid-column:1/-1;display:flex;justify-content:space-between;
+  color:var(--muted);font-size:13px}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+button.btn{font:inherit;font-weight:500;padding:9px 16px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink);
+  cursor:pointer}
+button.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+button.btn.good{color:var(--auto);border-color:var(--auto)}
+button.btn.bad{color:var(--block);border-color:var(--block)}
+button.btn:disabled{opacity:.5;cursor:wait}
+button:focus-visible,input:focus-visible,.toggle:focus-visible{
+  outline:3px solid #2f7cf6;outline-offset:2px}
+#say{min-height:24px;margin-bottom:12px;font-weight:500}
+#say.error{color:var(--block)}
+.grid{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;
+  align-items:start;margin-bottom:16px}
+.stack{display:grid;gap:16px}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th{text-align:left;font-weight:500;color:var(--muted);padding:6px 10px 6px 0;
+  border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:9px 10px 9px 0;border-bottom:1px solid var(--line);
+  vertical-align:top}
+tr:last-child td{border-bottom:0}
+td.r,th.r{text-align:right}
+tr.low td:first-child{box-shadow:inset 3px 0 0 var(--hold);padding-left:10px}
+.tag{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12.5px;
+  font-weight:500;white-space:nowrap}
+.tag.paid{background:var(--auto-bg);color:var(--auto)}
+.tag.pending{background:var(--hold-bg);color:var(--hold)}
+.tag.blocked,.tag.failed{background:var(--block-bg);color:var(--block)}
+.tag.denied,.tag.low-off{background:var(--idle-bg);color:var(--idle)}
+.tag.low{background:var(--hold-bg);color:var(--hold)}
+.queue-item{border:1px solid var(--line);border-radius:8px;padding:12px;
+  margin-bottom:10px}
+.queue-item:last-child{margin-bottom:0}
+.queue-item .why{color:var(--muted);font-size:13.5px;margin:4px 0 10px}
+.queue-item .row{display:flex;justify-content:space-between;gap:10px}
+.empty{color:var(--muted)}
+form.mandate{display:grid;gap:12px}
+label.f{display:grid;gap:4px;font-size:13.5px;color:var(--muted)}
+input[type=number]{font:inherit;padding:8px 10px;border-radius:8px;
+  border:1px solid var(--line);background:var(--bg);color:var(--ink);width:100%}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:0;padding:8px 12px}
+legend{font-size:13.5px;color:var(--muted);padding:0 6px}
+fieldset label{display:flex;gap:8px;align-items:center;padding:3px 0}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.log td:first-child{white-space:nowrap;color:var(--muted)}
+.auto-row{display:flex;gap:22px;flex-wrap:wrap;align-items:center;
+  margin-bottom:12px}
+.opt{display:flex;align-items:center;gap:10px;font-weight:500}
+.opt .toggle{width:46px;height:26px}
+.opt .toggle::after{top:3px;left:23px;width:20px;height:20px}
+.opt .toggle[aria-checked="false"]{background:var(--idle)}
+.opt .toggle[aria-checked="false"]::after{left:3px}
+.opt select{font:inherit;padding:5px 8px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--ink)}
+.chip{margin-left:auto;font-size:13px;color:var(--muted)}
+@media (max-width:900px){
+  .grid{grid-template-columns:1fr}
+  .budget{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  .toggle,.toggle::after,.bar i{transition:none}
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>Agent Allowance</h1>
+      <p class="muted">Your restocking agent can only spend inside the rules
+        you set. Anything outside them waits for you or is blocked.</p>
+    </div>
+    <div class="switch">
+      <div><b id="switchLabel">Spending is on</b>
+        <small>Kill switch</small></div>
+      <button class="toggle" id="kill" role="switch" aria-checked="true"
+        aria-label="Allow the agent to spend"></button>
+    </div>
+  </header>
+
+  <div class="banner" id="banner">Spending is paused. Every new order is
+    blocked until you turn it back on.</div>
+
+  <section class="card budget" aria-label="Monthly budget">
+    <div class="num" id="spent">$0.00</div>
+    <div class="bar" role="progressbar" aria-label="Budget used"
+      id="barWrap"><i id="barFill"></i></div>
+    <div class="sub"><span id="budgetText"></span><span id="leftText"></span>
+    </div>
+  </section>
+
+  <div class="actions">
+    <button class="btn primary" id="runBtn">Run agent</button>
+    <button class="btn" id="dayBtn">Fast-forward one day</button>
+    <button class="btn" id="resetBtn">Reset demo</button>
+  </div>
+  <div class="auto-row" aria-label="Automation">
+    <div class="opt">
+      <button class="toggle" id="autoBtn" role="switch" aria-checked="false"
+        aria-label="Autopilot"></button>
+      <span>Autopilot <span class="muted">agent orders by itself</span></span>
+    </div>
+    <div class="opt">
+      <button class="toggle" id="playBtn" role="switch" aria-checked="false"
+        aria-label="Play time"></button>
+      <span>Play time</span>
+      <select id="speed" aria-label="Seconds per simulated day">
+        <option value="3">1 day / 3s</option>
+        <option value="5">1 day / 5s</option>
+        <option value="10">1 day / 10s</option>
+      </select>
+    </div>
+    <b id="dayText"></b>
+    <span class="chip" id="chip"></span>
+  </div>
+  <div id="say" role="status" aria-live="polite"></div>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="card">
+        <h2>Inventory</h2>
+        <div class="scroll"><table>
+          <thead><tr><th>Item</th><th class="r">In stock</th>
+            <th class="r">Days left</th><th>Status</th></tr></thead>
+          <tbody id="inv"></tbody>
+        </table></div>
+      </section>
+      <section class="card">
+        <h2>Orders</h2>
+        <div class="scroll"><table>
+          <thead><tr><th>#</th><th>Item</th><th>Supplier</th>
+            <th class="r">Qty</th><th class="r">Total</th><th>Result</th>
+            <th>Why</th></tr></thead>
+          <tbody id="orders"></tbody>
+        </table></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="card">
+        <h2>Needs your approval</h2>
+        <div id="queue"></div>
+      </section>
+      <section class="card">
+        <h2>Spending rules</h2>
+        <form class="mandate" id="form">
+          <div class="two">
+            <label class="f">Monthly budget ($)
+              <input type="number" id="f_budget" min="0" step="1"></label>
+            <label class="f">Max per order ($)
+              <input type="number" id="f_limit" min="0" step="1"></label>
+          </div>
+          <div class="two">
+            <label class="f">Ask me above ($)
+              <input type="number" id="f_thresh" min="0" step="1"></label>
+            <label class="f">Max price rise (%)
+              <input type="number" id="f_spike" min="0" step="1"></label>
+          </div>
+          <fieldset><legend>Approved suppliers</legend>
+            <div id="f_sup"></div></fieldset>
+          <fieldset><legend>Allowed categories</legend>
+            <div id="f_cat"></div></fieldset>
+          <button class="btn primary" type="submit">Save rules</button>
+        </form>
+      </section>
+    </div>
+  </div>
+
+  <section class="card">
+    <h2>Audit log</h2>
+    <div class="scroll"><table class="log">
+      <thead><tr><th>Time</th><th>Who</th><th>Action</th><th>Detail</th>
+      </tr></thead>
+      <tbody id="log"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<script>
+const SUPPLIERS = {
+  sup_a: "FreshCo Wholesale", sup_b: "BeanBox Supply",
+  sup_x: "QuickDeal Traders"
+};
+const CATEGORIES = ["ingredients", "packaging", "cleaning"];
+const STATUS = {
+  PAID: "Paid", PENDING: "Needs approval", BLOCKED: "Blocked",
+  DENIED: "Denied", FAILED: "Failed", APPROVED: "Approved"
+};
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
+  {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const money = (n) => "$" + Number(n).toLocaleString(undefined,
+  {minimumFractionDigits: 2, maximumFractionDigits: 2});
+let state = null;
+
+async function api(path, method = "GET", body) {
+  const res = await fetch(path, {
+    method, headers: {"Content-Type": "application/json"},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail || msg; } catch (e) { /* keep */ }
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+function say(text, isError = false) {
+  const el = $("say");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+function tag(status) {
+  return `<span class="tag ${status.toLowerCase()}">`
+    + `${esc(STATUS[status] || status)}</span>`;
+}
+
+function renderBudget(m) {
+  const pct = Math.min(100, (m.spent_this_month / m.monthly_budget) * 100);
+  $("spent").textContent = money(m.spent_this_month);
+  $("barFill").style.width = pct + "%";
+  $("barFill").className = pct >= 80 ? "warn" : "";
+  $("barWrap").setAttribute("aria-valuenow", Math.round(pct));
+  $("budgetText").textContent = "spent of " + money(m.monthly_budget)
+    + " this month";
+  $("leftText").textContent = money(
+    Math.max(0, m.monthly_budget - m.spent_this_month)) + " left";
+  $("kill").setAttribute("aria-checked", String(m.active));
+  $("switchLabel").textContent = m.active ? "Spending is on"
+    : "Spending is paused";
+  $("banner").classList.toggle("show", !m.active);
+}
+
+function renderInventory(items) {
+  $("inv").innerHTML = items.map((i) => `
+    <tr class="${i.low ? "low" : ""}">
+      <td>${esc(i.name)}<div class="muted" style="font-size:12.5px">
+        ${esc(i.category)}</div></td>
+      <td class="r">${esc(i.stock)}</td>
+      <td class="r">${i.days_left ?? "-"}</td>
+      <td>${i.low ? '<span class="tag low">Low</span>'
+        : '<span class="tag low-off">OK</span>'}</td>
+    </tr>`).join("");
+}
+
+function renderQueue(pending) {
+  if (!pending.length) {
+    $("queue").innerHTML = '<p class="empty">Nothing is waiting. Run the '
+      + "agent and held orders will show up here.</p>";
+    return;
+  }
+  $("queue").innerHTML = pending.map((p) => `
+    <div class="queue-item">
+      <div class="row"><b>${p.qty} x ${esc(p.sku)}</b>
+        <b>${money(p.total)}</b></div>
+      <div class="why">${esc(SUPPLIERS[p.supplier_id] || p.supplier_id)}
+        at ${money(p.unit_price)} each.<br>${esc(p.decision_reason)}</div>
+      <div class="row">
+        <button class="btn good" data-act="approve" data-id="${p.id}">
+          Approve and pay</button>
+        <button class="btn bad" data-act="deny" data-id="${p.id}">
+          Deny</button>
+      </div>
+    </div>`).join("");
+}
+
+function renderOrders(purchases) {
+  if (!purchases.length) {
+    $("orders").innerHTML = '<tr><td colspan="7" class="empty">No orders '
+      + "yet. Press Run agent.</td></tr>";
+    return;
+  }
+  $("orders").innerHTML = purchases.slice(0, 25).map((p) => `
+    <tr><td>${p.id}</td><td>${esc(p.sku)}</td>
+      <td>${esc(SUPPLIERS[p.supplier_id] || p.supplier_id)}</td>
+      <td class="r">${p.qty}</td><td class="r">${money(p.total)}</td>
+      <td>${tag(p.status)}</td>
+      <td class="muted">${esc(p.decision_reason)}</td></tr>`).join("");
+}
+
+function renderLog(entries) {
+  $("log").innerHTML = entries.slice(0, 30).map((e) => `
+    <tr><td>${esc(new Date(e.ts).toLocaleTimeString())}</td>
+      <td>${esc(e.actor)}</td><td>${esc(e.action)}</td>
+      <td>${esc(e.detail)}</td></tr>`).join("");
+}
+
+function checks(target, options, selected, labels) {
+  $(target).innerHTML = options.map((o) => `
+    <label><input type="checkbox" value="${esc(o)}"
+      ${selected.includes(o) ? "checked" : ""}>
+      ${esc(labels ? labels[o] : o)}</label>`).join("");
+}
+
+function fillForm(m) {
+  $("f_budget").value = m.monthly_budget;
+  $("f_limit").value = m.per_order_limit;
+  $("f_thresh").value = m.approval_threshold;
+  $("f_spike").value = m.max_price_spike_pct;
+  checks("f_sup", Object.keys(SUPPLIERS), m.approved_suppliers, SUPPLIERS);
+  checks("f_cat", CATEGORIES, m.allowed_categories);
+}
+
+const MODE = {
+  llm: "AI model", rule_based: "rule-based (no AI key set)",
+  rule_based_capped: "rule-based (AI limit reached)",
+  rule_based_fallback: "rule-based (AI call failed)"
+};
+
+function renderAuto(a, day) {
+  $("autoBtn").setAttribute("aria-checked", String(a.autopilot));
+  $("playBtn").setAttribute("aria-checked", String(a.play));
+  $("speed").value = String(a.interval_seconds);
+  $("dayText").textContent = "Day " + day;
+  const m = a.last_run && a.last_run.mode;
+  $("chip").textContent = "Last agent run: "
+    + (m ? (MODE[m] || m) : "none yet");
+}
+
+async function refresh(withForm = false) {
+  state = await api("/state");
+  renderBudget(state.mandate);
+  renderInventory(state.inventory);
+  renderQueue(state.pending);
+  renderOrders(state.purchases);
+  renderLog(state.log);
+  renderAuto(state.autopilot, state.day);
+  if (withForm) fillForm(state.mandate);
+}
+
+async function busy(button, task) {
+  button.disabled = true;
+  try { await task(); }
+  catch (err) { say(err.message, true); }
+  finally { button.disabled = false; }
+}
+
+function picked(id) {
+  return [...document.querySelectorAll(`#${id} input:checked`)]
+    .map((i) => i.value);
+}
+
+$("runBtn").onclick = (ev) => busy(ev.target, async () => {
+  const res = await api("/agent/run", "POST");
+  const n = (s) => res.orders.filter((o) => o.status === s).length;
+  say(res.orders.length
+    ? `Agent proposed ${res.orders.length} orders: ${n("PAID")} paid, `
+      + `${n("PENDING")} need your approval, ${n("BLOCKED")} blocked.`
+    : "Nothing new to order. Items already waiting or blocked are skipped.");
+  await refresh();
+});
+
+$("dayBtn").onclick = (ev) => busy(ev.target, async () => {
+  await api("/advance-day", "POST");
+  say("One day of sales applied. Stock is lower.");
+  await refresh();
+});
+
+$("resetBtn").onclick = (ev) => busy(ev.target, async () => {
+  await api("/reset", "POST");
+  say("Demo data reloaded.");
+  await refresh(true);
+});
+
+$("kill").onclick = (ev) => busy(ev.target, async () => {
+  const on = state.mandate.active;
+  await api("/mandate", "POST", {active: !on});
+  say(on ? "Spending paused." : "Spending is on again.");
+  await refresh();
+});
+
+$("form").onsubmit = (ev) => {
+  ev.preventDefault();
+  busy(ev.submitter, async () => {
+    await api("/mandate", "POST", {
+      monthly_budget: Number($("f_budget").value),
+      per_order_limit: Number($("f_limit").value),
+      approval_threshold: Number($("f_thresh").value),
+      max_price_spike_pct: Number($("f_spike").value),
+      approved_suppliers: picked("f_sup"),
+      allowed_categories: picked("f_cat"),
+    });
+    say("Rules saved.");
+    await refresh(true);
+  });
+};
+
+$("queue").onclick = (ev) => {
+  const btn = ev.target.closest("button[data-act]");
+  if (!btn) return;
+  busy(btn, async () => {
+    const res = await api(
+      `/purchases/${btn.dataset.id}/${btn.dataset.act}`, "POST");
+    say(`Order #${res.id}: ${STATUS[res.status] || res.status}`
+      + (res.reason ? ". " + res.reason : "."));
+    await refresh();
+  });
+};
+
+async function setAuto(patch, msg) {
+  await api("/autopilot", "POST", patch);
+  say(msg);
+  await refresh();
+}
+
+$("autoBtn").onclick = (ev) => busy(ev.target, async () => {
+  const on = !state.autopilot.autopilot;
+  await setAuto({autopilot: on}, on
+    ? "Autopilot on. The agent orders by itself when stock is low."
+    : "Autopilot off.");
+});
+
+$("playBtn").onclick = (ev) => busy(ev.target, async () => {
+  const on = !state.autopilot.play;
+  await setAuto({play: on}, on ? "Time is running." : "Time paused.");
+});
+
+$("speed").onchange = (ev) => busy(ev.target, () =>
+  setAuto({interval_seconds: Number(ev.target.value)}, "Speed updated."));
+
+setInterval(() => {
+  const a = state && state.autopilot;
+  if (a && (a.play || a.autopilot) && !document.hidden) {
+    refresh().catch(() => {});
+  }
+}, 2500);
+
+refresh(true).catch((err) => say(err.message, true));
+</script>
+</body>
+</html>

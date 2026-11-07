@@ -1,0 +1,16 @@
+{
+  "active": true,
+  "monthly_budget": 600,
+  "spent_this_month": 0,
+  "per_order_limit": 200,
+  "approval_threshold": 100,
+  "approved_suppliers": [
+    "sup_a",
+    "sup_b"
+  ],
+  "allowed_categories": [
+    "ingredients",
+    "packaging"
+  ],
+  "max_price_spike_pct": 20
+}

@@ -1,0 +1,41 @@
+[
+  {
+    "id": "sup_a",
+    "name": "FreshCo Wholesale",
+    "lead_days": 2,
+    "prices": {
+      "OAT-MILK": 3.2,
+      "WHOLE-MILK": 2.5,
+      "COFFEE-BEANS": 21.0,
+      "SYRUP-VANILLA": 6.8,
+      "CUPS-12OZ": 0.08,
+      "LIDS-12OZ": 0.04,
+      "NAPKINS": 0.01,
+      "PASTRY-BOX": 0.3,
+      "CLEANING-SPRAY": 4.5
+    }
+  },
+  {
+    "id": "sup_b",
+    "name": "BeanBox Supply",
+    "lead_days": 3,
+    "prices": {
+      "OAT-MILK": 3.36,
+      "WHOLE-MILK": 2.625,
+      "SYRUP-VANILLA": 7.14,
+      "TEA-BAGS": 0.0525,
+      "CUPS-12OZ": 0.084,
+      "LIDS-12OZ": 0.042,
+      "NAPKINS": 0.0105,
+      "PASTRY-BOX": 0.315
+    }
+  },
+  {
+    "id": "sup_x",
+    "name": "QuickDeal Traders",
+    "lead_days": 1,
+    "prices": {
+      "TEA-BAGS": 0.04
+    }
+  }
+]

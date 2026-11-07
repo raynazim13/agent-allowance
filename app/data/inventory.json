@@ -1,0 +1,92 @@
+[
+  {
+    "sku": "OAT-MILK",
+    "name": "Oat milk 1L",
+    "category": "ingredients",
+    "stock": 12,
+    "reorder_at": 12,
+    "daily_sales": 6,
+    "usual_price": 3.2
+  },
+  {
+    "sku": "WHOLE-MILK",
+    "name": "Whole milk 1L",
+    "category": "ingredients",
+    "stock": 14,
+    "reorder_at": 15,
+    "daily_sales": 8,
+    "usual_price": 2.5
+  },
+  {
+    "sku": "COFFEE-BEANS",
+    "name": "Coffee beans 1kg",
+    "category": "ingredients",
+    "stock": 14,
+    "reorder_at": 15,
+    "daily_sales": 3,
+    "usual_price": 14.0
+  },
+  {
+    "sku": "SYRUP-VANILLA",
+    "name": "Vanilla syrup 750ml",
+    "category": "ingredients",
+    "stock": 9,
+    "reorder_at": 5,
+    "daily_sales": 1,
+    "usual_price": 6.8
+  },
+  {
+    "sku": "TEA-BAGS",
+    "name": "Tea bags",
+    "category": "ingredients",
+    "stock": 70,
+    "reorder_at": 80,
+    "daily_sales": 30,
+    "usual_price": 0.05
+  },
+  {
+    "sku": "CUPS-12OZ",
+    "name": "Paper cups 12oz",
+    "category": "packaging",
+    "stock": 140,
+    "reorder_at": 150,
+    "daily_sales": 60,
+    "usual_price": 0.08
+  },
+  {
+    "sku": "LIDS-12OZ",
+    "name": "Cup lids 12oz",
+    "category": "packaging",
+    "stock": 400,
+    "reorder_at": 150,
+    "daily_sales": 60,
+    "usual_price": 0.04
+  },
+  {
+    "sku": "NAPKINS",
+    "name": "Napkins",
+    "category": "packaging",
+    "stock": 900,
+    "reorder_at": 300,
+    "daily_sales": 80,
+    "usual_price": 0.01
+  },
+  {
+    "sku": "PASTRY-BOX",
+    "name": "Pastry box",
+    "category": "packaging",
+    "stock": 120,
+    "reorder_at": 40,
+    "daily_sales": 15,
+    "usual_price": 0.3
+  },
+  {
+    "sku": "CLEANING-SPRAY",
+    "name": "Cleaning spray",
+    "category": "cleaning",
+    "stock": 3,
+    "reorder_at": 3,
+    "daily_sales": 1,
+    "usual_price": 4.5
+  }
+]
