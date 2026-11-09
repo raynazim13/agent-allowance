@@ -18,41 +18,43 @@ _llm_calls: list[float] = []
 last_run: dict = {"mode": None, "at": None}
 
 SYSTEM_PROMPT = (
-    "You restock inventory for a small business. For each low-stock "
-    "item, compare supplier quotes, pick the best supplier by price and "
-    f"lead time, and order about {COVER_DAYS} days of sales cover "
-    "(daily_sales x days minus current stock). Only report what "
-    "propose_order returns. Never claim money was spent unless the "
-    "status is PAID. If the status is SENT, say the payment is in "
-    "progress. If an order is HOLD, say it needs owner approval. "
-    "If it is BLOCKED because the supplier is not approved, you may try "
-    "a different supplier once. Never split an order to get around a "
-    "limit. Finish with a short summary."
+    "You restock inventory for a small business. Call check_inventory "
+    "once: it lists every low-stock item with all supplier quotes. For "
+    "each item pick the best supplier by price and lead time and order "
+    f"about {COVER_DAYS} days of sales cover (suggested_qty is a good "
+    "default). Send all orders in ONE propose_orders call. A policy "
+    "engine decides each order; only report what it returns. Never "
+    "claim money was spent unless the status is PAID. If the status is "
+    "SENT, say the payment is in progress. If an order is HOLD, say it "
+    "needs owner approval. If one is BLOCKED because the supplier is "
+    "not approved, you may retry that item once with another supplier. "
+    "Never split an order to get around a limit. Finish with a short "
+    "summary."
 )
+LLM_TIMEOUT_S = 30
+MAX_ORDERS_PER_CALL = 20
 
 TOOLS = [
     {"type": "function", "function": {
         "name": "check_inventory",
-        "description": "List items at or below their reorder level.",
+        "description": "Low-stock items with all supplier quotes.",
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
-        "name": "get_supplier_quotes",
-        "description": "Get supplier prices and lead times for one item.",
+        "name": "propose_orders",
+        "description": "Propose orders. A policy engine decides each.",
         "parameters": {
             "type": "object",
-            "properties": {"sku": {"type": "string"}},
-            "required": ["sku"]}}},
-    {"type": "function", "function": {
-        "name": "propose_order",
-        "description": "Propose an order. A policy engine decides.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "sku": {"type": "string"},
-                "supplier_id": {"type": "string"},
-                "qty": {"type": "integer"},
-                "reason": {"type": "string"}},
-            "required": ["sku", "supplier_id", "qty"]}}},
+            "properties": {"orders": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "sku": {"type": "string"},
+                        "supplier_id": {"type": "string"},
+                        "qty": {"type": "integer"},
+                        "reason": {"type": "string"}},
+                    "required": ["sku", "supplier_id", "qty"]}}},
+            "required": ["orders"]}}},
 ]
 
 
@@ -109,12 +111,28 @@ def needs_action() -> bool:
     return bool(_candidates())
 
 
+INVENTORY_FIELDS = (
+    "sku", "category", "stock", "daily_sales", "usual_price",
+    "suggested_qty", "days_left",
+)
+QUOTE_FIELDS = ("supplier_id", "unit_price", "lead_days")
+
+
 def check_inventory() -> list[dict]:
-    """Low-stock items the agent should consider (tool for the LLM)."""
-    return [
-        {k: v for k, v in c.items() if k != "best_quote"}
-        for c in _candidates()
-    ]
+    """Low-stock items with all supplier quotes (tool for the LLM).
+
+    Quotes are included so the model does not need one extra call per
+    item, which keeps a run inside a free tier's tokens-per-minute.
+    """
+    found = []
+    for c in _candidates():
+        entry = {k: c[k] for k in INVENTORY_FIELDS}
+        entry["quotes"] = [
+            {k: q[k] for k in QUOTE_FIELDS}
+            for q in service.get_quotes(c["sku"])
+        ]
+        found.append(entry)
+    return found
 
 
 def _target_qty(item: dict) -> int:
@@ -122,19 +140,34 @@ def _target_qty(item: dict) -> int:
     return max(1, math.ceil(item["daily_sales"] * COVER_DAYS - item["stock"]))
 
 
+def _propose_one(order: object, orders: list[dict]) -> dict:
+    """Send one LLM-proposed order through the policy engine."""
+    if not isinstance(order, dict):
+        return {"status": "ERROR", "reason": "Order must be an object"}
+    try:
+        qty = int(order.get("qty", 0))
+    except (TypeError, ValueError):
+        return {"status": "ERROR", "reason": "qty must be a whole number"}
+    result = service.process_order(
+        str(order.get("sku", "")), str(order.get("supplier_id", "")),
+        qty, str(order.get("reason", "")),
+    )
+    orders.append(result)
+    return result
+
+
 def _dispatch(name: str, args: dict, orders: list[dict]) -> object:
     """Run one tool call requested by the LLM."""
     if name == "check_inventory":
         return check_inventory()
-    if name == "get_supplier_quotes":
-        return service.get_quotes(args.get("sku", ""))
-    if name == "propose_order":
-        result = service.process_order(
-            args.get("sku", ""), args.get("supplier_id", ""),
-            int(args.get("qty", 0)), args.get("reason", ""),
-        )
-        orders.append(result)
-        return result
+    if name == "propose_orders":
+        batch = args.get("orders")
+        if not isinstance(batch, list):
+            return {"error": "orders must be a list"}
+        return [
+            _propose_one(order, orders)
+            for order in batch[:MAX_ORDERS_PER_CALL]
+        ]
     return {"error": f"Unknown tool {name}"}
 
 
@@ -155,18 +188,21 @@ def run_rule_based(mode: str = "rule_based") -> dict:
 def run_llm(api_key: str) -> dict:
     """Let an OpenAI-compatible LLM plan the restock with tool calls."""
     client = OpenAI(
-        api_key=api_key, base_url=os.getenv("LLM_BASE_URL") or None
+        api_key=api_key, base_url=os.getenv("LLM_BASE_URL") or None,
+        timeout=LLM_TIMEOUT_S, max_retries=1,
     )
     model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     messages: list = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": "Check stock and restock what's low."},
     ]
+    effort = os.getenv("LLM_REASONING_EFFORT", "").strip()
+    extra = {"reasoning_effort": effort} if effort else {}
     orders: list[dict] = []
     summary = ""
     for _ in range(MAX_STEPS):
         response = client.chat.completions.create(
-            model=model, messages=messages, tools=TOOLS
+            model=model, messages=messages, tools=TOOLS, **extra
         )
         message = response.choices[0].message
         messages.append(message)
