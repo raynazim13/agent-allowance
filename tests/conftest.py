@@ -14,4 +14,5 @@ def fresh_db(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     autopilot.update(play=False, autopilot=False, interval_seconds=5)
     agent.reset_llm_budget()
+    agent.clear_last_run()
     store.reset_db()

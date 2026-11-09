@@ -116,12 +116,27 @@ fieldset label{display:flex;gap:8px;align-items:center;padding:3px 0}
 .opt select{font:inherit;padding:5px 8px;border-radius:8px;
   border:1px solid var(--line);background:var(--panel);color:var(--ink)}
 .chip{margin-left:auto;font-size:13px;color:var(--muted)}
+.report{margin-bottom:16px}
+.report[hidden]{display:none}
+.report h2{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.report .tag{font-size:12px}
+.report .body{white-space:pre-line;font-size:14px;margin:0}
+.report small{display:block;color:var(--muted);margin-top:8px;font-size:12.5px}
+.tags{display:flex;gap:6px;flex-wrap:wrap}
+.tag.reason{background:var(--idle-bg);color:var(--idle);white-space:normal}
+.tag.reason.out,.tag.reason.blocked{background:var(--block-bg);color:var(--block)}
+.tag.reason.wait{background:var(--hold-bg);color:var(--hold)}
+.urgent{font-weight:500;color:var(--hold);font-size:13.5px}
+.urgent.now{color:var(--block)}
+@keyframes flash{from{background:var(--hold-bg)}to{background:transparent}}
+tr.flash td{animation:flash 1.6s ease-out}
 @media (max-width:900px){
   .grid{grid-template-columns:1fr}
   .budget{grid-template-columns:1fr}
 }
 @media (prefers-reduced-motion:reduce){
   .toggle,.toggle::after,.bar i{transition:none}
+  tr.flash td{animation:none}
 }
 </style>
 </head>
@@ -177,6 +192,12 @@ fieldset label{display:flex;gap:8px;align-items:center;padding:3px 0}
     <span class="chip" id="chip"></span>
   </div>
   <div id="say" role="status" aria-live="polite"></div>
+
+  <section class="card report" id="report" hidden aria-live="polite">
+    <h2>Agent's report <span class="tag" id="reportMode"></span></h2>
+    <p class="body" id="reportBody"></p>
+    <small id="reportTime"></small>
+  </section>
 
   <div class="grid">
     <div class="stack">
@@ -298,16 +319,36 @@ function renderBudget(m, reserved) {
   $("banner").classList.toggle("show", !m.active);
 }
 
+let lastStock = null;
+
+function reasonTag(text) {
+  const kind = text === "Out of stock" ? "out"
+    : text.startsWith("Blocked") ? "blocked"
+    : text.startsWith("Awaiting") ? "wait" : "";
+  return `<span class="tag reason ${kind}">${esc(text)}</span>`;
+}
+
 function renderInventory(items) {
+  const changed = (i) => lastStock && i.sku in lastStock
+    && lastStock[i.sku] !== i.stock;
   $("inv").innerHTML = items.map((i) => `
-    <tr class="${i.low ? "low" : ""}">
+    <tr class="${i.low ? "low" : ""} ${changed(i) ? "flash" : ""}">
       <td>${esc(i.name)}<div class="muted" style="font-size:12.5px">
         ${esc(i.category)}</div></td>
       <td class="r">${esc(i.stock)}</td>
       <td class="r">${i.days_left ?? "-"}</td>
-      <td>${i.low ? '<span class="tag low">Low</span>'
-        : '<span class="tag low-off">OK</span>'}</td>
+      <td><div class="tags">${i.low ? '<span class="tag low">Low</span>'
+        : '<span class="tag low-off">OK</span>'}
+        ${(i.tags || []).map(reasonTag).join("")}</div></td>
     </tr>`).join("");
+  lastStock = Object.fromEntries(items.map((i) => [i.sku, i.stock]));
+}
+
+function urgency(days) {
+  if (days === null || days === undefined) return "";
+  if (days <= 0) return '<div class="urgent now">Out of stock now</div>';
+  return `<div class="urgent">Runs out in ${days} day${days === 1 ? "" : "s"}`
+    + "</div>";
 }
 
 function renderQueue(pending) {
@@ -320,6 +361,7 @@ function renderQueue(pending) {
     <div class="queue-item">
       <div class="row"><b>${p.qty} x ${esc(p.sku)}</b>
         <b>${money(p.total)}</b></div>
+      ${urgency(p.days_left)}
       <div class="why">${esc(SUPPLIERS[p.supplier_id] || p.supplier_id)}
         at ${money(p.unit_price)} each.<br>${esc(p.decision_reason)}</div>
       <div class="row">
@@ -374,6 +416,20 @@ const MODE = {
   rule_based_fallback: "rule-based (AI call failed)"
 };
 
+function renderReport(run) {
+  if (!run || !run.mode) { $("report").hidden = true; return; }
+  $("report").hidden = false;
+  const ai = run.mode === "llm";
+  $("reportMode").className = "tag " + (ai ? "paid" : "denied");
+  $("reportMode").textContent = ai
+    ? "AI: " + (run.model || "model") : MODE[run.mode] || run.mode;
+  const text = esc(run.summary || "No summary.")
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  $("reportBody").innerHTML = text;
+  $("reportTime").textContent = run.at
+    ? "Run at " + new Date(run.at * 1000).toLocaleTimeString() : "";
+}
+
 function renderAuto(a, day) {
   $("autoBtn").setAttribute("aria-checked", String(a.autopilot));
   $("playBtn").setAttribute("aria-checked", String(a.play));
@@ -392,6 +448,7 @@ async function refresh(withForm = false) {
   renderOrders(state.purchases);
   renderLog(state.log);
   renderAuto(state.autopilot, state.day);
+  renderReport(state.autopilot.last_run);
   if (withForm) fillForm(state.mandate);
 }
 
@@ -426,6 +483,7 @@ $("dayBtn").onclick = (ev) => busy(ev.target, async () => {
 
 $("resetBtn").onclick = (ev) => busy(ev.target, async () => {
   await api("/reset", "POST");
+  lastStock = null;
   say("Demo data reloaded.");
   await refresh(true);
 });

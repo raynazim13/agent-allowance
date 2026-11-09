@@ -15,11 +15,12 @@ COVER_DAYS = 7
 MAX_STEPS = 15
 _run_lock = threading.Lock()
 _llm_calls: list[float] = []
-last_run: dict = {"mode": None, "at": None}
+last_run: dict = {"mode": None, "at": None, "summary": "", "model": None}
 
 SYSTEM_PROMPT = (
     "You restock inventory for a small business. Call check_inventory "
-    "once: it lists every low-stock item with all supplier quotes. For "
+    "once: it lists every low-stock item, most urgent first, with all "
+    "supplier quotes. Orders are funded most urgent first. For "
     "each item pick the best supplier by price and lead time and order "
     f"about {COVER_DAYS} days of sales cover (suggested_qty is a good "
     "default). Send all orders in ONE propose_orders call. A policy "
@@ -86,7 +87,11 @@ def _is_repeat_block(sku: str, supplier_id: str, qty: int) -> bool:
 
 
 def _candidates() -> list[dict]:
-    """Low items worth ordering now (skips waiting and repeat blocks)."""
+    """Low items worth ordering now, most urgent (fewest days) first.
+
+    Skips items that already have an open order and exact repeats of
+    an order that is still blocked for the same reason.
+    """
     waiting = _pending_skus()
     found = []
     for item in store.get_inventory():
@@ -98,12 +103,13 @@ def _candidates() -> list[dict]:
         qty = _target_qty(item)
         if _is_repeat_block(item["sku"], quotes[0]["supplier_id"], qty):
             continue
-        sales = item["daily_sales"]
+        left = service.days_left(item)
         found.append({
             **item, "suggested_qty": qty, "best_quote": quotes[0],
-            "days_left": round(item["stock"] / sales, 1) if sales else None,
+            "days_left": round(left, 1) if left != float("inf") else None,
+            "_urgency": left,
         })
-    return found
+    return sorted(found, key=lambda c: c["_urgency"])
 
 
 def needs_action() -> bool:
@@ -156,6 +162,41 @@ def _propose_one(order: object, orders: list[dict]) -> dict:
     return result
 
 
+def _most_urgent_first(batch: list) -> list:
+    """Sort proposed orders so the item running out soonest goes first.
+
+    Enforced in code, so the model cannot spend the budget on a less
+    urgent item first. Unknown items go last.
+    """
+    urgency = {i["sku"]: service.days_left(i) for i in store.get_inventory()}
+
+    def key(order: object) -> float:
+        """Days left for the order's item."""
+        sku = order.get("sku") if isinstance(order, dict) else None
+        return urgency.get(str(sku), float("inf"))
+
+    return sorted(batch, key=key)
+
+
+def summarize(orders: list[dict]) -> str:
+    """Plain-language report of what happened to each order."""
+    if not orders:
+        return "Nothing new to order right now."
+    words = {
+        "PAID": "paid", "SENT": "payment in progress",
+        "PENDING": "needs your approval", "BLOCKED": "blocked",
+        "FAILED": "payment failed", "ERROR": "rejected",
+    }
+    lines = [f"Ordered {len(orders)} items, most urgent first:"]
+    for o in orders:
+        status = o.get("status", "")
+        line = f"- {o.get('sku', '?')}: {words.get(status, status)}"
+        if status in ("PENDING", "BLOCKED", "ERROR") and o.get("reason"):
+            line += f" ({o['reason']})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def _dispatch(name: str, args: dict, orders: list[dict]) -> object:
     """Run one tool call requested by the LLM."""
     if name == "check_inventory":
@@ -166,7 +207,7 @@ def _dispatch(name: str, args: dict, orders: list[dict]) -> object:
             return {"error": "orders must be a list"}
         return [
             _propose_one(order, orders)
-            for order in batch[:MAX_ORDERS_PER_CALL]
+            for order in _most_urgent_first(batch[:MAX_ORDERS_PER_CALL])
         ]
     return {"error": f"Unknown tool {name}"}
 
@@ -181,8 +222,8 @@ def run_rule_based(mode: str = "rule_based") -> dict:
         for c in _candidates()
     ]
     store.log("agent", "run", f"{mode} run, {len(orders)} orders")
-    return {"mode": mode, "orders": orders,
-            "summary": f"Proposed {len(orders)} new orders."}
+    return {"mode": mode, "orders": orders, "summary": summarize(orders),
+            "model": None}
 
 
 def run_llm(api_key: str) -> dict:
@@ -217,7 +258,10 @@ def run_llm(api_key: str) -> dict:
                 "content": json.dumps(output),
             })
     store.log("agent", "run", f"LLM run, {len(orders)} orders")
-    return {"mode": "llm", "orders": orders, "summary": summary}
+    return {
+        "mode": "llm", "orders": orders,
+        "summary": summary or summarize(orders), "model": model,
+    }
 
 
 def _llm_allowed() -> bool:
@@ -226,7 +270,7 @@ def _llm_allowed() -> bool:
     _llm_calls[:] = [t for t in _llm_calls if now - t < 3600]
     if len(_llm_calls) >= int(os.getenv("LLM_MAX_PER_HOUR", "15")):
         return False
-    gap = float(os.getenv("LLM_MIN_GAP_S", "20"))
+    gap = float(os.getenv("LLM_MIN_GAP_S", "60"))
     return not _llm_calls or now - _llm_calls[-1] >= gap
 
 
@@ -251,9 +295,17 @@ def _run_once() -> dict:
         return run_rule_based("rule_based_fallback")
 
 
+def clear_last_run() -> None:
+    """Forget the last run (after a demo reset)."""
+    last_run.update(mode=None, at=None, summary="", model=None)
+
+
 def run_agent() -> dict:
     """Run the agent once. Runs never overlap."""
     with _run_lock:
         result = _run_once()
-    last_run.update(mode=result["mode"], at=time.time())
+    last_run.update(
+        mode=result["mode"], at=time.time(),
+        summary=result.get("summary", ""), model=result.get("model"),
+    )
     return result

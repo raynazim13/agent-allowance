@@ -53,6 +53,7 @@ def deny_purchase(purchase_id: int) -> dict:
 def reset() -> dict:
     """Reload the demo data (handy for judges)."""
     service.reset_demo()
+    agent.clear_last_run()
     return {"status": "reset"}
 
 

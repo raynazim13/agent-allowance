@@ -245,20 +245,67 @@ def update_mandate(update: MandateUpdate) -> Mandate:
     return mandate
 
 
+# What the owner sees next to a low item, keyed by its latest order.
+ORDER_TAGS = {
+    "SENT": "Paying...",
+    "PENDING": "Awaiting your approval",
+    "DENIED": "Denied by you",
+    "FAILED": "Payment failed",
+}
+
+
+def days_left(item: dict) -> float:
+    """Days of stock left (infinite if the item never sells)."""
+    sales = item["daily_sales"]
+    return item["stock"] / sales if sales else float("inf")
+
+
+def _item_tags(item: dict, latest: dict | None) -> list[str]:
+    """Why an item is (still) low: open, blocked or denied orders."""
+    tags = []
+    if item["stock"] <= 0:
+        tags.append("Out of stock")
+    if latest is None:
+        return tags
+    status = latest["status"]
+    if status == "SENT" or (item["low"] and status in ORDER_TAGS):
+        tags.append(ORDER_TAGS[status])
+    elif item["low"] and status == "BLOCKED":
+        tags.append(f"Blocked: {latest['decision_reason']}")
+    return tags
+
+
 def get_state() -> dict:
-    """Everything the dashboard needs in one call."""
+    """Everything the dashboard needs in one call.
+
+    Inventory and the approval queue are sorted most urgent first
+    (fewest days of stock left).
+    """
+    purchases = store.list_purchases()
+    latest: dict[str, dict] = {}
+    for purchase in purchases:  # newest first
+        latest.setdefault(purchase["sku"], purchase)
     inventory = store.get_inventory()
+    urgency = {}
     for item in inventory:
-        sales = item["daily_sales"]
-        item["days_left"] = round(item["stock"] / sales, 1) if sales else None
+        left = days_left(item)
+        urgency[item["sku"]] = left
+        item["days_left"] = round(left, 1) if left != float("inf") else None
         item["low"] = item["stock"] <= item["reorder_at"]
+        item["tags"] = _item_tags(item, latest.get(item["sku"]))
+    inventory.sort(key=lambda i: urgency[i["sku"]])
+    pending = store.list_purchases("PENDING")
+    for order in pending:
+        left = urgency.get(order["sku"], float("inf"))
+        order["days_left"] = round(left, 1) if left != float("inf") else None
+    pending.sort(key=lambda o: urgency.get(o["sku"], float("inf")))
     sending = store.list_purchases("SENT")
     return {
         "inventory": inventory,
         "mandate": store.get_mandate().model_dump(),
         "reserved": round(sum(p["total"] for p in sending), 2),
-        "pending": store.list_purchases("PENDING"),
-        "purchases": store.list_purchases(),
+        "pending": pending,
+        "purchases": purchases,
         "log": store.list_log(),
         "day": store.count_log("advance_day"),
     }
