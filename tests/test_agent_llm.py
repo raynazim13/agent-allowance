@@ -153,3 +153,18 @@ def test_reasoning_effort_passed_only_when_set(llm, monkeypatch):
     fake = llm([_reply(content="Nothing to do.")])
     agent.run_agent()
     assert fake.requests[0]["reasoning_effort"] == "low"
+
+
+def test_prompt_defines_every_status():
+    """PENDING must read as 'waiting for approval', never a payment.
+
+    Regression: the model once reported held (PENDING) orders as
+    "payment is in progress" because the prompt only defined HOLD.
+    """
+    prompt = agent.SYSTEM_PROMPT
+    for status in ("PAID", "SENT", "PENDING", "BLOCKED"):
+        assert f"{status}" in prompt
+    assert "PENDING (decision HOLD): waiting for the owner's approval" in (
+        prompt
+    )
+    assert "no money has moved" in prompt
