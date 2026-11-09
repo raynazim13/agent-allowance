@@ -5,3 +5,5 @@ __pycache__/
 *.db
 .pytest_cache/
 CLAUDE.md
+devpost.md
+video_script.md
