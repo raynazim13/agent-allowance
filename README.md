@@ -125,7 +125,7 @@ flowchart LR
 | AI | Groq (OpenAI-compatible API), model `openai/gpt-oss-120b`, tool calling |
 | Payments | PayPal Payouts API (sandbox), OAuth client credentials |
 | Hosting | Render (free web service, `render.yaml` Blueprint) |
-| Tests | pytest (78 tests, PayPal and the LLM are mocked) |
+| Tests | pytest (79 tests, PayPal and the LLM are mocked) |
 
 Code map:
 
