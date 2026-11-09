@@ -12,6 +12,9 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.10
+      # Render's disk is ephemeral: the demo reseeds itself on restart.
+      - key: DB_PATH
+        value: /tmp/agent_allowance.db
       - key: PAYMENTS_BACKEND
         value: paypal
       - key: PAYPAL_CLIENT_ID
@@ -20,9 +23,5 @@ services:
         sync: false
       - key: PAYPAL_SUPPLIER_EMAILS
         sync: false
-      - key: LLM_API_KEY
-        sync: false
-      - key: LLM_BASE_URL
-        sync: false
-      - key: LLM_MODEL
-        sync: false
+      # LLM_API_KEY / LLM_BASE_URL / LLM_MODEL: add in the dashboard
+      # once the Groq key is tested. Unset = rule-based agent.
